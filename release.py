@@ -5,25 +5,24 @@ import os
 
 def main():
     # Ścieżka do pliku wykonywalnego w folderze release
-    exe_path = os.path.join("target", "release", "exr_thumbnailer.exe")
+    exe_path = os.path.join("target", "release", "exruster_tools.exe")
     
-    # Parametry dla exr_thumbnailer.exe z nowymi funkcjonalnościami
+    # Parametry dla exruster_tools.exe z nowymi funkcjonalnościami TIFF
     cmd = [
         exe_path, 
         "-s", "data",           # source folder
-        "-d", "thumb",          # destination folder
-        "-t", "130",            # thumbnail height
-        "-l",                   # enable linear tone mapping
-        "-g", "2.2",            # gamma correction
-        "-f", "lanczos3"        # scaling filter algorithm
+        "-d", "tiff",           # destination folder
+        "-c", "deflate",        # TIFF compression (deflate dla lepszej kompresji)
+        "--info", "statystyki.txt"  # custom stats filename
     ]
     
     try:
         print("Uruchamiam: " + " ".join(cmd))
-        print("Nowe funkcjonalności:")
-        print("  - Linear tone mapping dla HDR")
-        print("  - Gamma correction (2.2)")
-        print("  - Filtr skalowania: Lanczos3")
+        print("Nowe funkcjonalności TIFF:")
+        print("  - Konwersja EXR do TIFF z zachowaniem rozdzielczości")
+        print("  - Kompresja Deflate (najlepsza kompresja)")
+        print("  - Przetwarzanie wsadowe wszystkich plików EXR")
+        print("  - Statystyki w pliku 'statystyki.txt'")
         result = subprocess.run(cmd, check=True)
         print("Polecenie wykonane pomyślnie!")
     except subprocess.CalledProcessError as e:

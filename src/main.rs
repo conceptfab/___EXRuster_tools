@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
 use std::time::{Instant, Duration};
 
-/// A fast EXR to thumbnail converter with linear color space support
+/// A fast EXR to TIFF converter with batch processing support
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -15,35 +15,23 @@ struct Args {
     #[arg(short = 's', long)]
     source_folder: PathBuf,
 
-    /// Destination folder for thumbnails
+    /// Destination folder for TIFF files
     #[arg(short = 'd', long)]
     dest_folder: PathBuf,
 
-    /// Height of the thumbnail in pixels (width is scaled proportionally)
-    #[arg(short = 't', long)]
-    height: u32,
+    /// TIFF compression type (none, lzw, deflate)
+    #[arg(short = 'c', long, default_value = "lzw")]
+    compression: String,
 
     /// Filename for the conversion statistics report
     #[arg(short, long, default_value = "conversion_stats.txt")]
     info: String,
-
-    /// Enable linear color space tone mapping
-    #[arg(short = 'l', long)]
-    linear_tone_mapping: bool,
-
-    /// Gamma value for color correction (default: 2.2)
-    #[arg(short = 'g', long, default_value = "2.2")]
-    gamma: f32,
-
-    /// Scaling filter algorithm (lanczos3, gaussian, cubic, triangle)
-    #[arg(short = 'f', long, default_value = "lanczos3")]
-    filter: String,
 }
 
 /// Statistics for timing operations
 struct TimingStats {
-    total_load_time: AtomicU64,    // Total time for loading/creating thumbnails (in nanoseconds)
-    total_save_time: AtomicU64,    // Total time for saving thumbnails (in nanoseconds)
+    total_load_time: AtomicU64,    // Total time for loading EXR files (in nanoseconds)
+    total_save_time: AtomicU64,    // Total time for saving TIFF files (in nanoseconds)
 }
 
 impl TimingStats {
@@ -75,40 +63,38 @@ impl TimingStats {
     }
 }
 
-/// Color processing configuration
-struct ColorConfig {
-    linear_tone_mapping: bool,
-    gamma: f32,
+/// TIFF compression configuration
+struct CompressionConfig {
+    _compression: String,
 }
 
-impl ColorConfig {
-    fn new(linear_tone_mapping: bool, gamma: f32) -> Self {
-        Self {
-            linear_tone_mapping,
-            gamma,
-        }
+impl CompressionConfig {
+    fn new(compression_type: &str) -> Self {
+        let compression = match compression_type.to_lowercase().as_str() {
+            "none" | "lzw" | "deflate" => compression_type.to_string(),
+            _ => {
+                println!("Warning: Unknown compression '{}', using LZW", compression_type);
+                "lzw".to_string()
+            }
+        };
+
+        Self { _compression: compression }
     }
 }
 
 fn process_exr_file(
     exr_path: &Path,
     dest_folder: &Path,
-    height: u32,
     timing_stats: &TimingStats,
-    color_config: &ColorConfig,
-    filter_type: image::imageops::FilterType,
+    _compression_config: &CompressionConfig,
 ) -> Result<PathBuf, String> {
     let file_name = exr_path.file_name().ok_or("Invalid file name")?;
     let file_name_str = file_name.to_string_lossy();
     let mut out_path = dest_folder.to_path_buf();
     out_path.push(file_name_str.as_ref());
-    out_path.set_extension("png");
+    out_path.set_extension("tiff");
 
     let load_start = Instant::now();
-
-    // Copy color config data to avoid lifetime issues
-    let linear_tone_mapping = color_config.linear_tone_mapping;
-    let gamma = color_config.gamma;
 
     // Read the EXR file using the existing working API
     let reader = exr::read_first_rgba_layer_from_file(
@@ -118,59 +104,77 @@ fn process_exr_file(
             resolution,
             pixels: vec![image::Rgba([0u8; 4]); resolution.width() * resolution.height()],
         },
-        // A function that fills the previously generated pixel data with color processing
-        move |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
+        // A function that fills the previously generated pixel data
+        |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
             let index = position.y() * pixel_vec.resolution.width() + position.x();
             
-            // Process pixel with copied color config
-            let (r, g, b) = if linear_tone_mapping {
-                // Reinhard tone mapping dla HDR
-                let tone_map = |x: f32| x / (1.0 + x);
-                (tone_map(r), tone_map(g), tone_map(b))
-            } else {
-                (r, g, b)
+            // Convert HDR values to 16-bit range (0-65535) for TIFF
+            let convert_to_16bit = |x: f32| {
+                let clamped = x.max(0.0).min(1.0);
+                (clamped * 65535.0) as u16
             };
-
-            // Gamma correction
-            let gamma_correct = |x: f32| x.powf(1.0 / gamma);
             
             let processed = [
-                (gamma_correct(r.max(0.0).min(1.0)) * 255.0) as u8,
-                (gamma_correct(g.max(0.0).min(1.0)) * 255.0) as u8,
-                (gamma_correct(b.max(0.0).min(1.0)) * 255.0) as u8,
-                (a.max(0.0).min(1.0) * 255.0) as u8,
+                convert_to_16bit(r),
+                convert_to_16bit(g),
+                convert_to_16bit(b),
+                convert_to_16bit(a),
             ];
             
-            pixel_vec.pixels[index] = image::Rgba(processed);
+            // Store as RGBA16 for TIFF
+            pixel_vec.pixels[index] = image::Rgba([
+                (processed[0] / 256) as u8,
+                (processed[1] / 256) as u8,
+                (processed[2] / 256) as u8,
+                (processed[3] / 256) as u8,
+            ]);
         },
     )
     .map_err(|e| e.to_string())?;
 
     // Access the pixel data correctly
     let image_data = reader.layer_data.channel_data.pixels;
-    let (width, img_height) = (
+    let (width, height) = (
         image_data.resolution.width() as u32,
         image_data.resolution.height() as u32,
     );
-
-    let thumb_width = (width as f32 / img_height as f32 * height as f32) as u32;
-
-    // Create a dynamic image from the raw pixel data
-    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-        width,
-        img_height,
-        image_data.pixels.into_iter().flat_map(|rgba| rgba.0).collect::<Vec<u8>>(),
-    )
-    .ok_or("Could not create image buffer")?;
-
-    // Resize the image using the specified filter
-    let thumbnail = image::imageops::resize(&img, thumb_width, height, filter_type);
 
     let load_duration = load_start.elapsed();
     timing_stats.add_load_time(load_duration);
 
     let save_start = Instant::now();
-    thumbnail.save(&out_path).map_err(|e| e.to_string())?;
+
+    // Create a dynamic image from the raw pixel data
+    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+        width,
+        height,
+        image_data.pixels.into_iter().flat_map(|rgba| rgba.0).collect::<Vec<u8>>(),
+    )
+    .ok_or("Could not create image buffer")?;
+
+    // Convert to 16-bit RGBA for TIFF
+    let rgba16_data: Vec<u16> = img.pixels()
+        .flat_map(|rgba| {
+            let r = (rgba[0] as f32 / 255.0 * 65535.0) as u16;
+            let g = (rgba[1] as f32 / 255.0 * 65535.0) as u16;
+            let b = (rgba[2] as f32 / 255.0 * 65535.0) as u16;
+            let a = (rgba[3] as f32 / 255.0 * 65535.0) as u16;
+            vec![r, g, b, a]
+        })
+        .collect();
+
+    // Create 16-bit RGBA image
+    let img_16bit = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(
+        width,
+        height,
+        rgba16_data,
+    )
+    .ok_or("Could not create 16-bit image buffer")?;
+
+    // Save as TIFF using image library
+    img_16bit.save_with_format(&out_path, image::ImageFormat::Tiff)
+        .map_err(|e| e.to_string())?;
+
     let save_duration = save_start.elapsed();
     timing_stats.add_save_time(save_duration);
 
@@ -188,19 +192,7 @@ fn main() -> io::Result<()> {
 
     fs::create_dir_all(&args.dest_folder)?;
 
-    let color_config = ColorConfig::new(args.linear_tone_mapping, args.gamma);
-
-    // Parsowanie filtru skalowania
-    let filter_type = match args.filter.as_str() {
-        "lanczos3" => image::imageops::FilterType::Lanczos3,
-        "gaussian" => image::imageops::FilterType::Gaussian,
-        "cubic" => image::imageops::FilterType::CatmullRom,
-        "triangle" => image::imageops::FilterType::Triangle,
-        _ => {
-            eprintln!("Warning: Unknown filter '{}', using Lanczos3", args.filter);
-            image::imageops::FilterType::Lanczos3
-        }
-    };
+    let compression_config = CompressionConfig::new(&args.compression);
 
     // Find all EXR files
     let exr_files: Vec<PathBuf> = fs::read_dir(&args.source_folder)?
@@ -222,15 +214,15 @@ fn main() -> io::Result<()> {
     let timing_stats = TimingStats::new();
 
     println!(
-        "Found {} EXR files. Starting conversion to {}px height thumbnails...",
-        total_files, args.height
+        "Found {} EXR files. Starting conversion to TIFF with {} compression...",
+        total_files, args.compression
     );
 
     // Process files in parallel
     exr_files.par_iter().for_each(|exr_path| {
-        match process_exr_file(exr_path, &args.dest_folder, args.height, &timing_stats, &color_config, filter_type) {
-            Ok(thumb_path) => {
-                println!("Successfully created thumbnail: {}", thumb_path.display());
+        match process_exr_file(exr_path, &args.dest_folder, &timing_stats, &compression_config) {
+            Ok(tiff_path) => {
+                println!("Successfully created TIFF: {}", tiff_path.display());
                 success_count.fetch_add(1, Ordering::SeqCst);
             }
             Err(e) => {
@@ -252,7 +244,7 @@ fn main() -> io::Result<()> {
     println!("\n=== Conversion Statistics ===");
     println!("Total execution time: {:.2}ms", total_duration.as_millis());
     println!("Processing time breakdown (parallel processing):");
-    println!("  - Loading/Creation: {:.2}ms (sum of all files)", load_time.as_millis());
+    println!("  - Loading: {:.2}ms (sum of all files)", load_time.as_millis());
     println!("  - Saving: {:.2}ms (sum of all files)", save_time.as_millis());
     println!("  - Total processing: {:.2}ms (sum of all files)", processing_time.as_millis());
     println!("Files: Success: {}, Failure: {}", successes, failures);
@@ -262,10 +254,10 @@ fn main() -> io::Result<()> {
     // Write detailed statistics to info file
     let stats_path = args.dest_folder.join(&args.info);
     let mut stats_file = File::create(&stats_path)?;
-    writeln!(stats_file, "=== EXR to Thumbnail Conversion Statistics ===")?;
+    writeln!(stats_file, "=== EXR to TIFF Conversion Statistics ===")?;
     writeln!(stats_file, "Source Folder: {}", args.source_folder.display())?;
     writeln!(stats_file, "Destination Folder: {}", args.dest_folder.display())?;
-    writeln!(stats_file, "Target Thumbnail Height: {}px", args.height)?;
+    writeln!(stats_file, "Compression: {}", args.compression)?;
     writeln!(stats_file, "============================================")?;
     writeln!(stats_file, "Total files found: {}", total_files)?;
     writeln!(stats_file, "Successfully converted: {}", successes)?;
@@ -273,7 +265,7 @@ fn main() -> io::Result<()> {
     writeln!(stats_file, "============================================")?;
     writeln!(stats_file, "Timing Breakdown (Parallel Processing):")?;
     writeln!(stats_file, "  Total execution time: {:.2}ms", total_duration.as_millis())?;
-    writeln!(stats_file, "  Loading/Creation time: {:.2}ms (sum of all files)", load_time.as_millis())?;
+    writeln!(stats_file, "  Loading time: {:.2}ms (sum of all files)", load_time.as_millis())?;
     writeln!(stats_file, "  Saving time: {:.2}ms (sum of all files)", save_time.as_millis())?;
     writeln!(stats_file, "  Total processing time: {:.2}ms (sum of all files)", processing_time.as_millis())?;
     writeln!(stats_file, "")?;

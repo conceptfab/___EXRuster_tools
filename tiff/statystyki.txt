@@ -1,0 +1,21 @@
+=== EXR to TIFF Conversion Statistics ===
+Source Folder: data
+Destination Folder: tiff
+Compression: deflate
+============================================
+Total files found: 13
+Successfully converted: 13
+Failed to convert: 0
+============================================
+Timing Breakdown (Parallel Processing):
+  Total execution time: 1033ms
+  Loading time: 5795ms (sum of all files)
+  Saving time: 6022ms (sum of all files)
+  Total processing time: 11817ms (sum of all files)
+
+Note: Due to parallel processing, total execution time is much shorter
+than the sum of individual file processing times.
+  Average load time per file: 445.77ms
+  Average save time per file: 463.23ms
+  Average total time per file: 909.00ms
+============================================

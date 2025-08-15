@@ -3,23 +3,22 @@ import subprocess
 import sys
 
 def main():
-    # Parametry dla polecenia cargo run z nowymi funkcjonalnościami
+    # Parametry dla polecenia cargo run z nowymi funkcjonalnościami TIFF
     cmd = [
         "cargo", "run", "--",
         "-s", "data",           # source folder
-        "-d", "thumb",          # destination folder
-        "-t", "200",            # thumbnail height
-        "-l",                   # enable linear tone mapping
-        "-g", "2.2",            # gamma correction
-        "-f", "gaussian"        # scaling filter algorithm (gaussian dla szybszego skalowania)
+        "-d", "tiff",           # destination folder
+        "-c", "lzw",            # TIFF compression (lzw, deflate, none)
+        "--info", "konwersja.txt"  # custom stats filename
     ]
     
     try:
         print("Uruchamiam: " + " ".join(cmd))
-        print("Nowe funkcjonalności:")
-        print("  - Linear tone mapping dla HDR")
-        print("  - Gamma correction (2.2)")
-        print("  - Filtr skalowania: Gaussian (szybszy niż Lanczos3)")
+        print("Nowe funkcjonalności TIFF:")
+        print("  - Konwersja EXR do TIFF z zachowaniem rozdzielczości")
+        print("  - Kompresja LZW (domyślna)")
+        print("  - Przetwarzanie wsadowe wszystkich plików EXR")
+        print("  - Statystyki w pliku 'konwersja.txt'")
         result = subprocess.run(cmd, check=True)
         print("Polecenie wykonane pomyślnie!")
     except subprocess.CalledProcessError as e:
