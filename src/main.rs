@@ -2,12 +2,12 @@ use clap::Parser;
 use exr::prelude as exr;
 use rayon::prelude::*;
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self, Write, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
 use std::time::{Instant, Duration};
 
-/// A fast EXR to TIFF converter with batch processing support
+/// A fast EXR to TIFF converter with multilayer support
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -30,8 +30,8 @@ struct Args {
 
 /// Statistics for timing operations
 struct TimingStats {
-    total_load_time: AtomicU64,    // Total time for loading EXR files (in nanoseconds)
-    total_save_time: AtomicU64,    // Total time for saving TIFF files (in nanoseconds)
+    total_load_time: AtomicU64,
+    total_save_time: AtomicU64,
 }
 
 impl TimingStats {
@@ -65,7 +65,7 @@ impl TimingStats {
 
 /// TIFF compression configuration
 struct CompressionConfig {
-    _compression: String,
+    compression: String,
 }
 
 impl CompressionConfig {
@@ -78,107 +78,103 @@ impl CompressionConfig {
             }
         };
 
-        Self { _compression: compression }
+        Self { compression }
     }
 }
 
+/// Convert f32 HDR value to u16 for TIFF
+fn hdr_to_u16(value: f32) -> u16 {
+    let clamped = value.max(0.0).min(1.0);
+    (clamped * 65535.0) as u16
+}
+
+/// Process a single EXR file and convert to multilayer TIFF
 fn process_exr_file(
     exr_path: &Path,
     dest_folder: &Path,
     timing_stats: &TimingStats,
-    _compression_config: &CompressionConfig,
-) -> Result<PathBuf, String> {
-    let file_name = exr_path.file_name().ok_or("Invalid file name")?;
-    let file_name_str = file_name.to_string_lossy();
-    let mut out_path = dest_folder.to_path_buf();
-    out_path.push(file_name_str.as_ref());
-    out_path.set_extension("tiff");
-
+    compression_config: &CompressionConfig,
+) -> std::result::Result<PathBuf, String> {
+    let file_name = exr_path.file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "Invalid file name".to_string())?;
+    
     let load_start = Instant::now();
 
-    // Read the EXR file using the existing working API
-    let reader = exr::read_first_rgba_layer_from_file(
+    // Read first RGBA layer from EXR file
+    let image = exr::read_first_rgba_layer_from_file(
         exr_path,
-        // A function that generates the pixel data for the image
         |resolution, _| exr::pixel_vec::PixelVec {
             resolution,
-            pixels: vec![image::Rgba([0u8; 4]); resolution.width() * resolution.height()],
+            pixels: vec![[0.0f32; 4]; resolution.width() * resolution.height()],
         },
-        // A function that fills the previously generated pixel data
         |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
             let index = position.y() * pixel_vec.resolution.width() + position.x();
-            
-            // Convert HDR values to 16-bit range (0-65535) for TIFF
-            let convert_to_16bit = |x: f32| {
-                let clamped = x.max(0.0).min(1.0);
-                (clamped * 65535.0) as u16
-            };
-            
-            let processed = [
-                convert_to_16bit(r),
-                convert_to_16bit(g),
-                convert_to_16bit(b),
-                convert_to_16bit(a),
-            ];
-            
-            // Store as RGBA16 for TIFF
-            pixel_vec.pixels[index] = image::Rgba([
-                (processed[0] / 256) as u8,
-                (processed[1] / 256) as u8,
-                (processed[2] / 256) as u8,
-                (processed[3] / 256) as u8,
-            ]);
+            if index < pixel_vec.pixels.len() {
+                pixel_vec.pixels[index] = [r, g, b, a];
+            }
         },
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Access the pixel data correctly
-    let image_data = reader.layer_data.channel_data.pixels;
-    let (width, height) = (
-        image_data.resolution.width() as u32,
-        image_data.resolution.height() as u32,
-    );
+    ).map_err(|e| format!("Failed to read EXR: {}", e))?;
 
     let load_duration = load_start.elapsed();
     timing_stats.add_load_time(load_duration);
 
     let save_start = Instant::now();
 
-    // Create a dynamic image from the raw pixel data
-    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-        width,
-        height,
-        image_data.pixels.into_iter().flat_map(|rgba| rgba.0).collect::<Vec<u8>>(),
-    )
-    .ok_or("Could not create image buffer")?;
+    // Create output path
+    let mut out_path = dest_folder.to_path_buf();
+    out_path.push(format!("{}.tiff", file_name));
 
-    // Convert to 16-bit RGBA for TIFF
-    let rgba16_data: Vec<u16> = img.pixels()
-        .flat_map(|rgba| {
-            let r = (rgba[0] as f32 / 255.0 * 65535.0) as u16;
-            let g = (rgba[1] as f32 / 255.0 * 65535.0) as u16;
-            let b = (rgba[2] as f32 / 255.0 * 65535.0) as u16;
-            let a = (rgba[3] as f32 / 255.0 * 65535.0) as u16;
-            vec![r, g, b, a]
-        })
-        .collect();
+    // Get layer dimensions from pixel data
+    let image_data = &image.layer_data.channel_data.pixels;
+    let width = image_data.resolution.width() as u32;
+    let height = image_data.resolution.height() as u32;
 
-    // Create 16-bit RGBA image
-    let img_16bit = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(
-        width,
-        height,
-        rgba16_data,
-    )
-    .ok_or("Could not create 16-bit image buffer")?;
-
-    // Save as TIFF using image library
-    img_16bit.save_with_format(&out_path, image::ImageFormat::Tiff)
-        .map_err(|e| e.to_string())?;
+    // Save layer as TIFF
+    save_layer_as_tiff(&out_path, &image_data.pixels, width, height, &compression_config.compression)?;
 
     let save_duration = save_start.elapsed();
     timing_stats.add_save_time(save_duration);
 
-    Ok(out_path)
+    // Return path to saved file
+    let mut result_path = dest_folder.to_path_buf();
+    result_path.push(format!("{}.tiff", file_name));
+
+    Ok(result_path)
+}
+
+/// Save a single layer as TIFF file
+fn save_layer_as_tiff(
+    output_path: &Path,
+    pixel_data: &[[f32; 4]],
+    width: u32,
+    height: u32,
+    _compression: &str,
+) -> std::result::Result<(), String> {
+    let file = File::create(output_path).map_err(|e| format!("Cannot create file: {}", e))?;
+    let mut tiff = tiff::encoder::TiffEncoder::new(BufWriter::new(file))
+        .map_err(|e| format!("Cannot create TIFF encoder: {}", e))?;
+
+    let pixel_count = (width * height) as usize;
+
+    // Create RGBA16 image
+    let image = tiff
+        .new_image::<tiff::encoder::colortype::RGBA16>(width, height)
+        .map_err(|e| format!("Cannot create RGBA image: {}", e))?;
+
+    // Prepare RGBA data
+    let mut rgba_data = vec![0u16; pixel_count * 4];
+    
+    for (i, pixel) in pixel_data.iter().enumerate().take(pixel_count) {
+        rgba_data[i * 4] = hdr_to_u16(pixel[0]);     // R
+        rgba_data[i * 4 + 1] = hdr_to_u16(pixel[1]); // G
+        rgba_data[i * 4 + 2] = hdr_to_u16(pixel[2]); // B
+        rgba_data[i * 4 + 3] = hdr_to_u16(pixel[3]); // A
+    }
+    
+    image.write_data(&rgba_data).map_err(|e| format!("Cannot write RGBA data: {}", e))?;
+
+    Ok(())
 }
 
 fn main() -> io::Result<()> {
@@ -248,8 +244,6 @@ fn main() -> io::Result<()> {
     println!("  - Saving: {:.2}ms (sum of all files)", save_time.as_millis());
     println!("  - Total processing: {:.2}ms (sum of all files)", processing_time.as_millis());
     println!("Files: Success: {}, Failure: {}", successes, failures);
-    println!("\nNote: Times are summed across all files due to parallel processing.");
-    println!("Total execution time is much shorter than sum of individual file times.");
 
     // Write detailed statistics to info file
     let stats_path = args.dest_folder.join(&args.info);
@@ -268,15 +262,11 @@ fn main() -> io::Result<()> {
     writeln!(stats_file, "  Loading time: {:.2}ms (sum of all files)", load_time.as_millis())?;
     writeln!(stats_file, "  Saving time: {:.2}ms (sum of all files)", save_time.as_millis())?;
     writeln!(stats_file, "  Total processing time: {:.2}ms (sum of all files)", processing_time.as_millis())?;
-    writeln!(stats_file, "")?;
-    writeln!(stats_file, "Note: Due to parallel processing, total execution time is much shorter")?;
-    writeln!(stats_file, "than the sum of individual file processing times.")?;
     if total_files > 0 {
         writeln!(stats_file, "  Average load time per file: {:.2}ms", (load_time.as_millis() as f64 / total_files as f64))?;
         writeln!(stats_file, "  Average save time per file: {:.2}ms", (save_time.as_millis() as f64 / total_files as f64))?;
         writeln!(stats_file, "  Average total time per file: {:.2}ms", (processing_time.as_millis() as f64 / total_files as f64))?;
     }
-    writeln!(stats_file, "============================================")?;
 
     println!("Detailed statistics saved to {}", stats_path.display());
 
