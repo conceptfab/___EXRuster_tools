@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
 use std::time::{Instant, Duration};
 
-/// A fast EXR to thumbnail converter
+/// A fast EXR to thumbnail converter with linear color space support
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -26,6 +26,18 @@ struct Args {
     /// Filename for the conversion statistics report
     #[arg(short, long, default_value = "conversion_stats.txt")]
     info: String,
+
+    /// Enable linear color space tone mapping
+    #[arg(short = 'l', long)]
+    linear_tone_mapping: bool,
+
+    /// Gamma value for color correction (default: 2.2)
+    #[arg(short = 'g', long, default_value = "2.2")]
+    gamma: f32,
+
+    /// Scaling filter algorithm (lanczos3, gaussian, cubic, triangle)
+    #[arg(short = 'f', long, default_value = "lanczos3")]
+    filter: String,
 }
 
 /// Statistics for timing operations
@@ -63,24 +75,42 @@ impl TimingStats {
     }
 }
 
+/// Color processing configuration
+struct ColorConfig {
+    linear_tone_mapping: bool,
+    gamma: f32,
+}
+
+impl ColorConfig {
+    fn new(linear_tone_mapping: bool, gamma: f32) -> Self {
+        Self {
+            linear_tone_mapping,
+            gamma,
+        }
+    }
+}
+
 fn process_exr_file(
     exr_path: &Path,
     dest_folder: &Path,
     height: u32,
     timing_stats: &TimingStats,
+    color_config: &ColorConfig,
+    filter_type: image::imageops::FilterType,
 ) -> Result<PathBuf, String> {
-    // Construct the output path for the thumbnail
     let file_name = exr_path.file_name().ok_or("Invalid file name")?;
     let file_name_str = file_name.to_string_lossy();
-    // Keep the full filename including numbers, just change extension to .png
     let mut out_path = dest_folder.to_path_buf();
     out_path.push(file_name_str.as_ref());
     out_path.set_extension("png");
 
-    // Measure loading/creation time
     let load_start = Instant::now();
-    
-    // Read the EXR file
+
+    // Copy color config data to avoid lifetime issues
+    let linear_tone_mapping = color_config.linear_tone_mapping;
+    let gamma = color_config.gamma;
+
+    // Read the EXR file using the existing working API
     let reader = exr::read_first_rgba_layer_from_file(
         exr_path,
         // A function that generates the pixel data for the image
@@ -88,15 +118,30 @@ fn process_exr_file(
             resolution,
             pixels: vec![image::Rgba([0u8; 4]); resolution.width() * resolution.height()],
         },
-        // A function that fills the previously generated pixel data
-        |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
+        // A function that fills the previously generated pixel data with color processing
+        move |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
             let index = position.y() * pixel_vec.resolution.width() + position.x();
-            pixel_vec.pixels[index] = image::Rgba([
-                (r * 255.0).min(255.0) as u8,
-                (g * 255.0).min(255.0) as u8,
-                (b * 255.0).min(255.0) as u8,
-                (a * 255.0).min(255.0) as u8,
-            ]);
+            
+            // Process pixel with copied color config
+            let (r, g, b) = if linear_tone_mapping {
+                // Reinhard tone mapping dla HDR
+                let tone_map = |x: f32| x / (1.0 + x);
+                (tone_map(r), tone_map(g), tone_map(b))
+            } else {
+                (r, g, b)
+            };
+
+            // Gamma correction
+            let gamma_correct = |x: f32| x.powf(1.0 / gamma);
+            
+            let processed = [
+                (gamma_correct(r.max(0.0).min(1.0)) * 255.0) as u8,
+                (gamma_correct(g.max(0.0).min(1.0)) * 255.0) as u8,
+                (gamma_correct(b.max(0.0).min(1.0)) * 255.0) as u8,
+                (a.max(0.0).min(1.0) * 255.0) as u8,
+            ];
+            
+            pixel_vec.pixels[index] = image::Rgba(processed);
         },
     )
     .map_err(|e| e.to_string())?;
@@ -108,7 +153,6 @@ fn process_exr_file(
         image_data.resolution.height() as u32,
     );
 
-    // Calculate proportional width
     let thumb_width = (width as f32 / img_height as f32 * height as f32) as u32;
 
     // Create a dynamic image from the raw pixel data
@@ -119,25 +163,14 @@ fn process_exr_file(
     )
     .ok_or("Could not create image buffer")?;
 
-    // Resize the image
-    let thumbnail = image::imageops::resize(
-        &img,
-        thumb_width,
-        height,
-        image::imageops::FilterType::Lanczos3,
-    );
+    // Resize the image using the specified filter
+    let thumbnail = image::imageops::resize(&img, thumb_width, height, filter_type);
 
-    // Record loading/creation time
     let load_duration = load_start.elapsed();
     timing_stats.add_load_time(load_duration);
 
-    // Measure saving time
     let save_start = Instant::now();
-    
-    // Save the thumbnail
     thumbnail.save(&out_path).map_err(|e| e.to_string())?;
-    
-    // Record saving time
     let save_duration = save_start.elapsed();
     timing_stats.add_save_time(save_duration);
 
@@ -148,14 +181,26 @@ fn main() -> io::Result<()> {
     let args = Args::parse();
     let start_time = Instant::now();
 
-    // Validate source path
     if !args.source_folder.is_dir() {
         eprintln!("Error: Source path is not a valid directory.");
         return Ok(());
     }
 
-    // Create destination folder if it doesn't exist
     fs::create_dir_all(&args.dest_folder)?;
+
+    let color_config = ColorConfig::new(args.linear_tone_mapping, args.gamma);
+
+    // Parsowanie filtru skalowania
+    let filter_type = match args.filter.as_str() {
+        "lanczos3" => image::imageops::FilterType::Lanczos3,
+        "gaussian" => image::imageops::FilterType::Gaussian,
+        "cubic" => image::imageops::FilterType::CatmullRom,
+        "triangle" => image::imageops::FilterType::Triangle,
+        _ => {
+            eprintln!("Warning: Unknown filter '{}', using Lanczos3", args.filter);
+            image::imageops::FilterType::Lanczos3
+        }
+    };
 
     // Find all EXR files
     let exr_files: Vec<PathBuf> = fs::read_dir(&args.source_folder)?
@@ -183,7 +228,7 @@ fn main() -> io::Result<()> {
 
     // Process files in parallel
     exr_files.par_iter().for_each(|exr_path| {
-        match process_exr_file(exr_path, &args.dest_folder, args.height, &timing_stats) {
+        match process_exr_file(exr_path, &args.dest_folder, args.height, &timing_stats, &color_config, filter_type) {
             Ok(thumb_path) => {
                 println!("Successfully created thumbnail: {}", thumb_path.display());
                 success_count.fetch_add(1, Ordering::SeqCst);
