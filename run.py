@@ -8,7 +8,8 @@ def main():
         "cargo", "run", "--",
         "-s", "data",           # source folder
         "-d", "PNG",            # destination folder
-        "--stats", "konwersja.txt"  # custom stats filename
+        "--stats", "konwersja.txt",  # custom stats filename
+        "--eight-bit-prefix", "_"
     ]
     
     try:

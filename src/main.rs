@@ -25,6 +25,10 @@ struct Args {
     /// Filename for the conversion statistics report
     #[arg(short = 't', long, default_value = "conversion_stats.txt")]
     stats: String,
+
+    /// Prefix for layers to be exported as 8-bit PNGs
+    #[arg(long, default_value = "_")]
+    eight_bit_prefix: String,
 }
 
 /// Statistics for timing operations
@@ -69,11 +73,17 @@ fn hdr_to_u16(value: f32) -> u16 {
     (value.clamp(0.0, 1.0) * 65535.0) as u16
 }
 
+/// Convert f32 HDR value to u8 for PNG
+fn hdr_to_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0) as u8
+}
+
 /// Process a single EXR file and convert its layers to PNG files
 fn process_exr_file(
     exr_path: &Path,
     dest_folder: &Path,
     timing_stats: &TimingStats,
+    eight_bit_prefix: &str,
 ) -> Result<Vec<PathBuf>, String> {
     let file_name = exr_path
         .file_stem()
@@ -131,7 +141,11 @@ fn process_exr_file(
             let mut png_path = output_dir.clone();
             png_path.push(format!("{}.png", layer_name));
 
-            save_layer_as_png(&png_path, &channels, width, height)?;
+            if layer_name.starts_with(eight_bit_prefix) {
+                save_layer_as_8bit_png(&png_path, &channels, width, height)?;
+            } else {
+                save_layer_as_16bit_png(&png_path, &channels, width, height)?;
+            }
 
             let save_duration = save_start.elapsed();
             timing_stats.add_save_time(save_duration);
@@ -156,7 +170,7 @@ fn find_channel<'a>(
 }
 
 /// Save a single layer as a 16-bit PNG file
-fn save_layer_as_png(
+fn save_layer_as_16bit_png(
     output_path: &Path,
     channels: &HashMap<String, Vec<f32>>,
     width: u32,
@@ -207,6 +221,58 @@ fn save_layer_as_png(
     Ok(())
 }
 
+/// Save a single layer as an 8-bit PNG file
+fn save_layer_as_8bit_png(
+    output_path: &Path,
+    channels: &HashMap<String, Vec<f32>>,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let r_channel = find_channel(channels, &["R", "r", "red", "Red"]);
+    let g_channel = find_channel(channels, &["G", "g", "green", "Green"]);
+    let b_channel = find_channel(channels, &["B", "b", "blue", "Blue"]);
+    let a_channel = find_channel(channels, &["A", "a", "alpha", "Alpha"]);
+
+    if let (Some(r), Some(g), Some(b)) = (r_channel, g_channel, b_channel) {
+        if let Some(a) = a_channel {
+            let mut image_buffer: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(width, height);
+            for (x, y, pixel) in image_buffer.enumerate_pixels_mut() {
+                let index = (y * width + x) as usize;
+                *pixel = Rgba([
+                    hdr_to_u8(r[index]),
+                    hdr_to_u8(g[index]),
+                    hdr_to_u8(b[index]),
+                    hdr_to_u8(a[index]),
+                ]);
+            }
+            image_buffer.save(output_path).map_err(|e| format!("Failed to save PNG file: {}", e))?;
+        } else {
+            let mut image_buffer: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(width, height);
+            for (x, y, pixel) in image_buffer.enumerate_pixels_mut() {
+                let index = (y * width + x) as usize;
+                *pixel = Rgb([
+                    hdr_to_u8(r[index]),
+                    hdr_to_u8(g[index]),
+                    hdr_to_u8(b[index]),
+                ]);
+            }
+            image_buffer.save(output_path).map_err(|e| format!("Failed to save PNG file: {}", e))?;
+        }
+    } else {
+        // Fallback to grayscale for single-channel images or if RGB channels are not found
+        if let Some(channel_data) = r_channel.or(g_channel).or(b_channel).or(a_channel).or(channels.values().next()) {
+            let mut image_buffer: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::new(width, height);
+            for (x, y, pixel) in image_buffer.enumerate_pixels_mut() {
+                let index = (y * width + x) as usize;
+                *pixel = Luma([hdr_to_u8(channel_data[index])]);
+            }
+            image_buffer.save(output_path).map_err(|e| format!("Failed to save PNG file: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
     let start_time = Instant::now();
@@ -246,7 +312,7 @@ fn main() -> io::Result<()> {
     );
 
     exr_files.par_iter().for_each(|exr_path| {
-        match process_exr_file(exr_path, &args.dest_folder, &timing_stats) {
+        match process_exr_file(exr_path, &args.dest_folder, &timing_stats, &args.eight_bit_prefix) {
             Ok(png_paths) => {
                 if png_paths.is_empty() {
                     println!(
@@ -331,6 +397,7 @@ fn main() -> io::Result<()> {
         save_time.as_millis()
     )?;
     writeln!(
+        stats_file,
         "  Total processing time: {:.2} ms (sum of all files)",
         processing_time.as_millis()
     )?;

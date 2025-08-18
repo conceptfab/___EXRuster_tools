@@ -184,3 +184,12 @@ Kompresja TIFF - może wymagać dodatkowej konfiguracji w save_multilayer_tiff
 Metadane warstw - można dodać więcej informacji o warstwach do pliku TIFF
 
 Ten kod zapewni konwersję wszystkich warstw z pliku EXR do formatu TIFF z zachowaniem informacji o warstwach.
+
+TODO:
+COLOR MAPPING!
+SPEED!!!!
+
+Export All
+Export default
+Export Color
+Export prefix
