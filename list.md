@@ -189,7 +189,8 @@ TODO:
 COLOR MAPPING!
 SPEED!!!!
 
-Export All
-Export default
-Export Color
+Export All/Full 16 bit
+Export default - RGB - one layer
+Export color mapping
+Export Color layers
 Export prefix
