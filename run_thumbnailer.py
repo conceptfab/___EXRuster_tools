@@ -3,20 +3,20 @@ import subprocess
 import sys
 
 def main():
-    # Parametry dla polecenia cargo run z nowymi funkcjonalnościami TIFF
+    # Parametry dla polecenia cargo run z poprawnymi opcjami
     cmd = [
         "cargo", "run", "--",
         "-s", "data",           # source folder
-        "-d", "tiff",           # destination folder
-        "-c", "lzw",            # TIFF compression (lzw, deflate, none)
-        "--info", "konwersja.txt"  # custom stats filename
+        "-d", "PNG",            # destination folder
+        "--stats", "konwersja.txt"  # custom stats filename
     ]
     
     try:
         print("Uruchamiam: " + " ".join(cmd))
-        print("Nowe funkcjonalności TIFF:")
-        print("  - Konwersja EXR do TIFF z zachowaniem rozdzielczości")
-        print("  - Kompresja LZW (domyślna)")
+        print("Konwersja EXR do PNG:")
+        print("  - Folder źródłowy: data")
+        print("  - Folder docelowy: PNG")
+        print("  - Konwersja EXR do PNG z zachowaniem rozdzielczości")
         print("  - Przetwarzanie wsadowe wszystkich plików EXR")
         print("  - Statystyki w pliku 'konwersja.txt'")
         result = subprocess.run(cmd, check=True)

@@ -1,13 +1,16 @@
+
 use clap::Parser;
-use exr::prelude::read;
+use exr::prelude::{read_all_data_from_file, FlatSamples, Levels};
+use image::{ImageBuffer, Rgba, Rgb, Luma};
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{self, Write, BufWriter};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
-/// A fast EXR to TIFF converter with multilayer support
+/// A fast EXR to PNG converter with multilayer support
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -15,17 +18,13 @@ struct Args {
     #[arg(short = 's', long)]
     source_folder: PathBuf,
 
-    /// Destination folder for TIFF files
+    /// Destination folder for PNG files
     #[arg(short = 'd', long)]
     dest_folder: PathBuf,
 
-    /// TIFF compression type (none, lzw, deflate)
-    #[arg(short = 'c', long, default_value = "lzw")]
-    compression: String,
-
     /// Filename for the conversion statistics report
-    #[arg(short, long, default_value = "conversion_stats.txt")]
-    info: String,
+    #[arg(short = 't', long, default_value = "conversion_stats.txt")]
+    stats: String,
 }
 
 /// Statistics for timing operations
@@ -43,11 +42,13 @@ impl TimingStats {
     }
 
     fn add_load_time(&self, duration: Duration) {
-        self.total_load_time.fetch_add(duration.as_nanos() as u64, Ordering::SeqCst);
+        self.total_load_time
+            .fetch_add(duration.as_nanos() as u64, Ordering::SeqCst);
     }
 
     fn add_save_time(&self, duration: Duration) {
-        self.total_save_time.fetch_add(duration.as_nanos() as u64, Ordering::SeqCst);
+        self.total_save_time
+            .fetch_add(duration.as_nanos() as u64, Ordering::SeqCst);
     }
 
     fn get_load_time(&self) -> Duration {
@@ -63,112 +64,145 @@ impl TimingStats {
     }
 }
 
-/// TIFF compression configuration
-struct CompressionConfig {
-    compression: String,
-}
-
-impl CompressionConfig {
-    fn new(compression_type: &str) -> Self {
-        let compression = match compression_type.to_lowercase().as_str() {
-            "none" | "lzw" | "deflate" => compression_type.to_string(),
-            _ => {
-                println!("Warning: Unknown compression '{}', using LZW", compression_type);
-                "lzw".to_string()
-            }
-        };
-
-        Self { compression }
-    }
-}
-
-/// Convert f32 HDR value to u16 for TIFF
+/// Convert f32 HDR value to u16 for PNG
 fn hdr_to_u16(value: f32) -> u16 {
-    let clamped = value.max(0.0).min(1.0);
-    (clamped * 65535.0) as u16
+    (value.clamp(0.0, 1.0) * 65535.0) as u16
 }
 
-/// Process a single EXR file and convert its layers to TIFF files
+/// Process a single EXR file and convert its layers to PNG files
 fn process_exr_file(
     exr_path: &Path,
     dest_folder: &Path,
     timing_stats: &TimingStats,
-    compression_config: &CompressionConfig,
-) -> std::result::Result<Vec<PathBuf>, String> {
-    let file_name = exr_path.file_stem()
+) -> Result<Vec<PathBuf>, String> {
+    let file_name = exr_path
+        .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| "Invalid file name".to_string())?;
-    
+
     let load_start = Instant::now();
 
-    // Read the full EXR file
-    let image = read::read_all_data_from_file(exr_path)
+    let image = read_all_data_from_file(exr_path)
         .map_err(|e| format!("Failed to read EXR file: {}", e))?;
 
     let load_duration = load_start.elapsed();
     timing_stats.add_load_time(load_duration);
 
+    let output_dir = dest_folder.join(file_name);
+    fs::create_dir_all(&output_dir)
+        .map_err(|e| format!("Failed to create output directory: {}", e))?;
+
     let mut saved_files = Vec::new();
 
-    // Process each layer
     for layer in image.layer_data {
-        let save_start = Instant::now();
+        let (width, height) = (
+            layer.size.width() as u32,
+            layer.size.height() as u32,
+        );
 
-        let _layer_name = "unnamed".to_string();
-        let (width, height) = (layer.size.width() as u32, layer.size.height() as u32);
+        let mut channels_by_layer: HashMap<String, HashMap<String, Vec<f32>>> = HashMap::new();
 
-        // For now, create a simple test image with gray data
-        // This is a temporary solution until we figure out the proper data access
-        let rgba_pixels: Vec<[f32; 4]> = vec![[0.5, 0.5, 0.5, 1.0]; (width * height) as usize];
+        for channel in &layer.channel_data.list {
+            let channel_name = channel.name.to_string();
+            let (layer_name, chan_name) = match channel_name.split_once('.') {
+                Some((layer, chan)) => (layer.to_string(), chan.to_string()),
+                None => ("default".to_string(), channel_name.clone()),
+            };
 
-        // Create output path
-        let mut out_path = dest_folder.to_path_buf();
-        let tiff_file_name = format!("{}.tiff", file_name);
-        out_path.push(tiff_file_name);
+            let samples = match &channel.sample_data {
+                Levels::Singular(samples) => match samples {
+                    FlatSamples::F32(samples) => Some(samples.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
 
-        // Save layer as TIFF
-        save_layer_as_tiff(&out_path, &rgba_pixels, width, height, &compression_config.compression)?;
-        
-        let save_duration = save_start.elapsed();
-        timing_stats.add_save_time(save_duration);
+            if let Some(samples) = samples {
+                channels_by_layer
+                    .entry(layer_name)
+                    .or_default()
+                    .insert(chan_name, samples);
+            }
+        }
 
-        saved_files.push(out_path);
+        for (layer_name, channels) in channels_by_layer {
+            let save_start = Instant::now();
+
+            let mut png_path = output_dir.clone();
+            png_path.push(format!("{}.png", layer_name));
+
+            save_layer_as_png(&png_path, &channels, width, height)?;
+
+            let save_duration = save_start.elapsed();
+            timing_stats.add_save_time(save_duration);
+
+            saved_files.push(png_path);
+        }
     }
 
     Ok(saved_files)
 }
 
+fn find_channel<'a>(
+    channels: &'a HashMap<String, Vec<f32>>,
+    candidates: &[&str],
+) -> Option<&'a Vec<f32>> {
+    for &candidate in candidates {
+        if let Some(channel) = channels.get(candidate) {
+            return Some(channel);
+        }
+    }
+    None
+}
 
-/// Save a single layer as TIFF file
-fn save_layer_as_tiff(
+/// Save a single layer as a 16-bit PNG file
+fn save_layer_as_png(
     output_path: &Path,
-    pixel_data: &[[f32; 4]],
+    channels: &HashMap<String, Vec<f32>>,
     width: u32,
     height: u32,
-    _compression: &str,
-) -> std::result::Result<(), String> {
-    let file = File::create(output_path).map_err(|e| format!("Cannot create file: {}", e))?;
-    let mut tiff = tiff::encoder::TiffEncoder::new(BufWriter::new(file))
-        .map_err(|e| format!("Cannot create TIFF encoder: {}", e))?;
+) -> Result<(), String> {
+    let r_channel = find_channel(channels, &["R", "r", "red", "Red"]);
+    let g_channel = find_channel(channels, &["G", "g", "green", "Green"]);
+    let b_channel = find_channel(channels, &["B", "b", "blue", "Blue"]);
+    let a_channel = find_channel(channels, &["A", "a", "alpha", "Alpha"]);
 
-    let pixel_count = (width * height) as usize;
-
-    // Create RGBA16 image
-    let image = tiff
-        .new_image::<tiff::encoder::colortype::RGBA16>(width, height)
-        .map_err(|e| format!("Cannot create RGBA image: {}", e))?;
-
-    // Prepare RGBA data
-    let mut rgba_data = vec![0u16; pixel_count * 4];
-    
-    for (i, pixel) in pixel_data.iter().enumerate().take(pixel_count) {
-        rgba_data[i * 4] = hdr_to_u16(pixel[0]);     // R
-        rgba_data[i * 4 + 1] = hdr_to_u16(pixel[1]); // G
-        rgba_data[i * 4 + 2] = hdr_to_u16(pixel[2]); // B
-        rgba_data[i * 4 + 3] = hdr_to_u16(pixel[3]); // A
+    if let (Some(r), Some(g), Some(b)) = (r_channel, g_channel, b_channel) {
+        if let Some(a) = a_channel {
+            let mut image_buffer: ImageBuffer<Rgba<u16>, Vec<u16>> = ImageBuffer::new(width, height);
+            for (x, y, pixel) in image_buffer.enumerate_pixels_mut() {
+                let index = (y * width + x) as usize;
+                *pixel = Rgba([
+                    hdr_to_u16(r[index]),
+                    hdr_to_u16(g[index]),
+                    hdr_to_u16(b[index]),
+                    hdr_to_u16(a[index]),
+                ]);
+            }
+            image_buffer.save(output_path).map_err(|e| format!("Failed to save PNG file: {}", e))?;
+        } else {
+            let mut image_buffer: ImageBuffer<Rgb<u16>, Vec<u16>> = ImageBuffer::new(width, height);
+            for (x, y, pixel) in image_buffer.enumerate_pixels_mut() {
+                let index = (y * width + x) as usize;
+                *pixel = Rgb([
+                    hdr_to_u16(r[index]),
+                    hdr_to_u16(g[index]),
+                    hdr_to_u16(b[index]),
+                ]);
+            }
+            image_buffer.save(output_path).map_err(|e| format!("Failed to save PNG file: {}", e))?;
+        }
+    } else {
+        // Fallback to grayscale for single-channel images or if RGB channels are not found
+        if let Some(channel_data) = r_channel.or(g_channel).or(b_channel).or(a_channel).or(channels.values().next()) {
+            let mut image_buffer: ImageBuffer<Luma<u16>, Vec<u16>> = ImageBuffer::new(width, height);
+            for (x, y, pixel) in image_buffer.enumerate_pixels_mut() {
+                let index = (y * width + x) as usize;
+                *pixel = Luma([hdr_to_u16(channel_data[index])]);
+            }
+            image_buffer.save(output_path).map_err(|e| format!("Failed to save PNG file: {}", e))?;
+        }
     }
-    
-    image.write_data(&rgba_data).map_err(|e| format!("Cannot write RGBA data: {}", e))?;
 
     Ok(())
 }
@@ -179,19 +213,20 @@ fn main() -> io::Result<()> {
 
     if !args.source_folder.is_dir() {
         eprintln!("Error: Source path is not a valid directory.");
-        return Ok(())
+        return Ok(());
     }
 
     fs::create_dir_all(&args.dest_folder)?;
 
-    let compression_config = CompressionConfig::new(&args.compression);
-
-    // Find all EXR files
     let exr_files: Vec<PathBuf> = fs::read_dir(&args.source_folder)?
         .filter_map(|entry| {
             entry.ok().and_then(|e| {
                 let path = e.path();
-                if path.is_file() && path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("exr")) {
+                if path.is_file()
+                    && path.extension().map_or(false, |ext| {
+                        ext.eq_ignore_ascii_case("exr")
+                    })
+                {
                     Some(path)
                 } else {
                     None
@@ -206,20 +241,21 @@ fn main() -> io::Result<()> {
     let timing_stats = TimingStats::new();
 
     println!(
-        "Found {} EXR files. Starting conversion to TIFF with {} compression...",
-        total_files,
-        args.compression
+        "Found {} EXR files. Starting conversion to PNG...",
+        total_files
     );
 
-    // Process files in parallel
     exr_files.par_iter().for_each(|exr_path| {
-        match process_exr_file(exr_path, &args.dest_folder, &timing_stats, &compression_config) {
-            Ok(tiff_paths) => {
-                if tiff_paths.is_empty() {
-                    println!("No convertible RGB layers found in {}", exr_path.display());
+        match process_exr_file(exr_path, &args.dest_folder, &timing_stats) {
+            Ok(png_paths) => {
+                if png_paths.is_empty() {
+                    println!(
+                        "No convertible layers found in {}",
+                        exr_path.display()
+                    );
                 } else {
-                    for tiff_path in tiff_paths {
-                        println!("Successfully created TIFF: {}", tiff_path.display());
+                    for png_path in png_paths {
+                        println!("Successfully created PNG: {}", png_path.display());
                     }
                 }
                 success_count.fetch_add(1, Ordering::SeqCst);
@@ -234,41 +270,86 @@ fn main() -> io::Result<()> {
     let total_duration = start_time.elapsed();
     let successes = success_count.load(Ordering::SeqCst);
     let failures = failure_count.load(Ordering::SeqCst);
-    
-    // Get timing statistics
+
     let load_time = timing_stats.get_load_time();
     let save_time = timing_stats.get_save_time();
     let processing_time = timing_stats.get_total_time();
 
-    println!("\n=== Conversion Statistics ===");
-    println!("Total execution time: {:.2} ms", total_duration.as_millis());
+    println!("
+=== Conversion Statistics ===");
+    println!(
+        "Total execution time: {:.2} ms",
+        total_duration.as_millis()
+    );
     println!("Processing time breakdown (parallel processing):");
-    println!("  - Loading: {:.2} ms (sum of all files)", load_time.as_millis());
-    println!("  - Saving: {:.2} ms (sum of all files)", save_time.as_millis());
-    println!("  - Total processing: {:.2} ms (sum of all files)", processing_time.as_millis());
+    println!(
+        "  - Loading: {:.2} ms (sum of all files)",
+        load_time.as_millis()
+    );
+    println!(
+        "  - Saving: {:.2} ms (sum of all files)",
+        save_time.as_millis()
+    );
+    println!(
+        "  - Total processing: {:.2} ms (sum of all files)",
+        processing_time.as_millis()
+    );
     println!("Files: Success: {}, Failure: {}", successes, failures);
 
-    // Write detailed statistics to info file
-    let stats_path = args.dest_folder.join(&args.info);
+    let stats_path = args.dest_folder.join(&args.stats);
     let mut stats_file = File::create(&stats_path)?;
-    writeln!(stats_file, "=== EXR to TIFF Conversion Statistics ===")?;
-    writeln!(stats_file, "Source Folder: {}", args.source_folder.display())?;
-    writeln!(stats_file, "Destination Folder: {}", args.dest_folder.display())?;
-    writeln!(stats_file, "Compression: {}", args.compression)?;
+    writeln!(stats_file, "=== EXR to PNG Conversion Statistics ===")?;
+    writeln!(
+        stats_file,
+        "Source Folder: {}",
+        args.source_folder.display()
+    )?;
+    writeln!(
+        stats_file,
+        "Destination Folder: {}",
+        args.dest_folder.display()
+    )?;
     writeln!(stats_file, "============================================")?;
     writeln!(stats_file, "Total files found: {}", total_files)?;
     writeln!(stats_file, "Successfully converted: {}", successes)?;
     writeln!(stats_file, "Failed to convert: {}", failures)?;
     writeln!(stats_file, "============================================")?;
     writeln!(stats_file, "Timing Breakdown (Parallel Processing):")?;
-    writeln!(stats_file, "  Total execution time: {:.2} ms", total_duration.as_millis())?;
-    writeln!(stats_file, "  Loading time: {:.2} ms (sum of all files)", load_time.as_millis())?;
-    writeln!(stats_file, "  Saving time: {:.2} ms (sum of all files)", save_time.as_millis())?;
-    writeln!(stats_file, "  Total processing time: {:.2} ms (sum of all files)", processing_time.as_millis())?;
+    writeln!(
+        stats_file,
+        "  Total execution time: {:.2} ms",
+        total_duration.as_millis()
+    )?;
+    writeln!(
+        stats_file,
+        "  Loading time: {:.2} ms (sum of all files)",
+        load_time.as_millis()
+    )?;
+    writeln!(
+        stats_file,
+        "  Saving time: {:.2} ms (sum of all files)",
+        save_time.as_millis()
+    )?;
+    writeln!(
+        "  Total processing time: {:.2} ms (sum of all files)",
+        processing_time.as_millis()
+    )?;
     if total_files > 0 {
-        writeln!(stats_file, "  Average load time per file: {:.2} ms", (load_time.as_millis() as f64 / total_files as f64))?;
-        writeln!(stats_file, "  Average save time per file: {:.2} ms", (save_time.as_millis() as f64 / total_files as f64))?;
-        writeln!(stats_file, "  Average total time per file: {:.2} ms", (processing_time.as_millis() as f64 / total_files as f64))?;
+        writeln!(
+            stats_file,
+            "  Average load time per file: {:.2} ms",
+            (load_time.as_millis() as f64 / total_files as f64)
+        )?;
+        writeln!(
+            stats_file,
+            "  Average save time per file: {:.2} ms",
+            (save_time.as_millis() as f64 / total_files as f64)
+        )?;
+        writeln!(
+            stats_file,
+            "  Average total time per file: {:.2} ms",
+            (processing_time.as_millis() as f64 / total_files as f64)
+        )?;
     }
 
     println!("Detailed statistics saved to {}", stats_path.display());

@@ -1,14 +1,14 @@
 [package]
-name = "exr-to-tiff-converter"
-version = "0.2.0"
+name = "exr-to-png-converter"
+version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 exr = "1.73"
 rayon = "1.8"
-tiff = "0.9"
+image = { version = "0.24", features = ["png"] }
 
 [[bin]]
-name = "exr-to-tiff-converter"
+name = "exr-to-png-converter"
 path = "src/main.rs"
