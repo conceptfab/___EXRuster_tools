@@ -5,7 +5,8 @@
       "WebFetch(domain:docs.rs)",
       "WebSearch",
       "WebFetch(domain:openexr.com)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

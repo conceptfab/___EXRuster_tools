@@ -15,7 +15,7 @@ set | findstr "THUMB_HEIGHT="
 set | findstr "INFO_FILENAME="
 echo.
 
-.\target\release\exr-to-tiff-converter.exe --source-folder %SOURCE_FOLDER% --dest-folder %DEST_FOLDER% --height %THUMB_HEIGHT% --info %INFO_FILENAME%
+.\target\release\readEXR.exe --source-folder %SOURCE_FOLDER% --dest-folder %DEST_FOLDER% --height %THUMB_HEIGHT% --info %INFO_FILENAME%
 
 echo.
 

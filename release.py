@@ -5,7 +5,7 @@ import os
 
 def main():
     # Ścieżka do pliku wykonywalnego w folderze release
-    exe_path = os.path.join("target", "release", "exr-to-tiff-converter")
+    exe_path = os.path.join("target", "release", "readEXR")
     
     # Parametry dla exruster_tools.exe z nowymi funkcjonalnościami TIFF
     cmd = [

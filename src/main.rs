@@ -1,37 +1,198 @@
 use std::fs;
 use std::path::Path;
 use std::io::Write;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+use std::time::Instant;
 use exr::prelude::*;
+use serde::{Deserialize, Serialize};
+use rayon::prelude::*;
+
+#[derive(Deserialize, Serialize)]
+struct ConfigSettings {
+    basic_rgb_channels: Vec<String>,
+    group_priority_order: Vec<String>,
+    fallback_names: FallbackNames,
+    paths: ConfigPaths,
+}
+
+#[derive(Deserialize, Serialize)]
+struct FallbackNames {
+    basic_rgb: String,
+    default: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ConfigPaths {
+    data_folder: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct GroupDefinition {
+    name: String,
+    #[serde(default)]
+    prefixes: Vec<String>,
+    #[serde(default)]
+    patterns: Vec<String>,
+    #[serde(default)]
+    basic_rgb: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ChannelGroupConfig {
+    config: ConfigSettings,
+    groups: HashMap<String, GroupDefinition>,
+    default_group: String,
+}
+
+fn create_default_config() -> ChannelGroupConfig {
+    let mut groups = HashMap::new();
+    
+    groups.insert("base".to_string(), GroupDefinition {
+        name: "Base".to_string(),
+        prefixes: vec!["Beauty".to_string()],
+        patterns: vec![],
+        basic_rgb: true,
+    });
+    
+    groups.insert("scene".to_string(), GroupDefinition {
+        name: "Scene".to_string(),
+        prefixes: vec!["Background".to_string(), "Translucency".to_string(), "Translucency0".to_string(), "VirtualBeauty".to_string(), "ZDepth".to_string()],
+        patterns: vec![],
+        basic_rgb: false,
+    });
+    
+    groups.insert("technical".to_string(), GroupDefinition {
+        name: "Technical".to_string(),
+        prefixes: vec!["RenderStamp".to_string(), "RenderStamp0".to_string()],
+        patterns: vec![],
+        basic_rgb: false,
+    });
+    
+    groups.insert("light".to_string(), GroupDefinition {
+        name: "Light".to_string(),
+        prefixes: vec!["Sky".to_string(), "Sun".to_string(), "LightMix".to_string()],
+        patterns: vec!["Light*".to_string()],
+        basic_rgb: false,
+    });
+    
+    groups.insert("cryptomatte".to_string(), GroupDefinition {
+        name: "Cryptomatte".to_string(),
+        prefixes: vec!["Cryptomatte".to_string(), "Cryptomatte0".to_string()],
+        patterns: vec![],
+        basic_rgb: false,
+    });
+    
+    groups.insert("scene_objects".to_string(), GroupDefinition {
+        name: "Scene Objects".to_string(),
+        prefixes: vec![],
+        patterns: vec!["ID*".to_string(), "_*".to_string()],
+        basic_rgb: false,
+    });
+    
+    
+    ChannelGroupConfig {
+        config: ConfigSettings {
+            basic_rgb_channels: vec!["R".to_string(), "G".to_string(), "B".to_string(), "A".to_string()],
+            group_priority_order: vec!["cryptomatte".to_string(), "light".to_string(), "scene".to_string(), "technical".to_string(), "scene_objects".to_string()],
+            fallback_names: FallbackNames {
+                basic_rgb: "Basic RGB".to_string(),
+                default: "Other".to_string(),
+            },
+            paths: ConfigPaths {
+                data_folder: "data".to_string(),
+            },
+        },
+        groups,
+        default_group: "Other".to_string(),
+    }
+}
+
+fn load_channel_config() -> std::result::Result<ChannelGroupConfig, Box<dyn std::error::Error>> {
+    let config_path = "channel_groups.json";
+    
+    if !std::path::Path::new(config_path).exists() {
+        println!("Creating default config file: {}", config_path);
+        let default_config = create_default_config();
+        let json_content = serde_json::to_string_pretty(&default_config)?;
+        fs::write(config_path, json_content)?;
+        return Ok(default_config);
+    }
+    
+    let config_content = fs::read_to_string(config_path)?;
+    let config: ChannelGroupConfig = serde_json::from_str(&config_content)?;
+    Ok(config)
+}
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let data_folder = "data";
+    let config = load_channel_config().unwrap_or_else(|e| {
+        eprintln!("Warning: Could not load config: {}. Using default.", e);
+        create_default_config()
+    });
+    
+    let data_folder = &config.config.paths.data_folder;
     
     if !Path::new(data_folder).exists() {
         eprintln!("Data folder '{}' does not exist", data_folder);
         return Ok(());
     }
     
-    let entries = fs::read_dir(data_folder)?;
+    let start_time = Instant::now();
     
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        
-        if path.extension().and_then(|s| s.to_str()) == Some("exr") {
+    // Collect all EXR files first
+    let exr_files: Vec<_> = fs::read_dir(data_folder)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|s| s.to_str())
+                .map(|ext| ext.to_lowercase() == "exr")
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    println!("Found {} EXR files to process", exr_files.len());
+    
+    // Share config between threads
+    let config = Arc::new(config);
+    
+    // Process files in parallel
+    let results: Vec<_> = exr_files
+        .par_iter()
+        .map(|path| {
+            let file_start = Instant::now();
             println!("Processing: {}", path.display());
             
-            match process_exr_file(&path) {
-                Ok(()) => println!("Successfully processed: {}", path.display()),
-                Err(e) => eprintln!("Error processing {}: {}", path.display(), e),
+            let result = process_exr_file(path, &config);
+            let duration = file_start.elapsed();
+            
+            match result {
+                Ok(()) => {
+                    println!("✓ Processed {} in {:.2}s", path.display(), duration.as_secs_f64());
+                    Ok(path.file_name().unwrap_or_default().to_string_lossy().to_string())
+                }
+                Err(e) => {
+                    eprintln!("✗ Error processing {}: {}", path.display(), e);
+                    Err(format!("Error in {}: {}", path.display(), e))
+                }
             }
-        }
-    }
+        })
+        .collect();
+    
+    let total_duration = start_time.elapsed();
+    let successful = results.iter().filter(|r| r.is_ok()).count();
+    let failed = results.iter().filter(|r| r.is_err()).count();
+    
+    println!("\n📊 Processing complete:");
+    println!("  ✓ Successful: {}", successful);
+    println!("  ✗ Failed: {}", failed);
+    println!("  ⏱️  Total time: {:.2}s", total_duration.as_secs_f64());
+    println!("  🚀 Avg per file: {:.2}s", total_duration.as_secs_f64() / exr_files.len() as f64);
     
     Ok(())
 }
 
-fn process_exr_file(exr_path: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn process_exr_file(exr_path: &Path, config: &Arc<ChannelGroupConfig>) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let image = read_all_data_from_file(exr_path)?;
     
     let file_stem = exr_path.file_stem()
@@ -79,16 +240,20 @@ fn process_exr_file(exr_path: &Path) -> std::result::Result<(), Box<dyn std::err
         
         writeln!(output_file, "  Channel Groups:")?;
         
+        // Pre-allocate with estimated capacity
         let mut channel_groups: BTreeMap<String, Vec<&_>> = BTreeMap::new();
         
-        for channel in &layer.channel_data.list {
-            let channel_name = channel.name.to_string();
-            let group_name = if let Some(dot_pos) = channel_name.find('.') {
-                channel_name[..dot_pos].to_string()
-            } else {
-                "Basic".to_string()
-            };
-            
+        // Process channels in parallel and group them
+        let grouped_channels: Vec<_> = layer.channel_data.list
+            .par_iter()
+            .map(|channel| {
+                let group_name = determine_channel_group(&channel.name.to_string(), config);
+                (group_name, channel)
+            })
+            .collect();
+        
+        // Sequential grouping (can't parallelize BTreeMap insertions easily)
+        for (group_name, channel) in grouped_channels {
             channel_groups.entry(group_name).or_insert_with(Vec::new).push(channel);
         }
         
@@ -106,4 +271,66 @@ fn process_exr_file(exr_path: &Path) -> std::result::Result<(), Box<dyn std::err
     }
     
     Ok(())
+}
+
+fn determine_channel_group(channel_name: &str, config: &Arc<ChannelGroupConfig>) -> String {
+    // Check for basic RGB channels first (avoid string allocation)
+    if ["R", "G", "B", "A"].contains(&channel_name) {
+        for group_def in config.groups.values() {
+            if group_def.basic_rgb {
+                return group_def.name.clone();
+            }
+        }
+        return config.config.fallback_names.basic_rgb.clone();
+    }
+    
+    let prefix = if let Some(dot_pos) = channel_name.find('.') {
+        &channel_name[..dot_pos]
+    } else {
+        channel_name
+    };
+    
+    // Check specific groups in priority order
+    for group_key in &config.config.group_priority_order {
+        if let Some(group_def) = config.groups.get(group_key) {
+            // Check exact prefix matches (avoid string allocation)
+            for prefix_str in &group_def.prefixes {
+                if prefix == prefix_str {
+                    return group_def.name.clone();
+                }
+            }
+            
+            // Check pattern matches
+            for pattern in &group_def.patterns {
+                if matches_pattern(prefix, pattern) {
+                    return group_def.name.clone();
+                }
+            }
+        }
+    }
+    
+    // Default to Scene Objects for unknown channels
+    if let Some(scene_objects_group) = config.groups.get("scene_objects") {
+        scene_objects_group.name.clone()
+    } else {
+        config.config.fallback_names.default.clone()
+    }
+}
+
+fn matches_pattern(text: &str, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    
+    if pattern.ends_with('*') {
+        let prefix_pattern = &pattern[..pattern.len()-1];
+        return text.starts_with(prefix_pattern);
+    }
+    
+    if pattern.starts_with('*') {
+        let suffix_pattern = &pattern[1..];
+        return text.ends_with(suffix_pattern);
+    }
+    
+    text == pattern
 }
