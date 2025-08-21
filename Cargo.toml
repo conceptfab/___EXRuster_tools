@@ -8,6 +8,7 @@ clap = { version = "4.4", features = ["derive"] }
 exr = "1.73"
 rayon = "1.8"
 image = { version = "0.24", features = ["png"] }
+once_cell = "1.19"
 
 [[bin]]
 name = "exr-to-png-converter"

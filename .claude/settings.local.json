@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo:*)",
+      "WebFetch(domain:docs.rs)",
+      "WebSearch",
+      "WebFetch(domain:openexr.com)",
+      "Bash(cat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
