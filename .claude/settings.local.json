@@ -6,7 +6,9 @@
       "WebSearch",
       "WebFetch(domain:openexr.com)",
       "Bash(cat:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(.targetreleasereadEXR.exe)",
+      "Bash(./target/release/readEXR.exe)"
     ],
     "deny": [],
     "ask": []

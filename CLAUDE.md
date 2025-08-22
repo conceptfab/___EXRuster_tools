@@ -15,7 +15,13 @@ This is a Rust-based EXR (OpenEXR) file processing toolkit with two main applica
 - **Check compilation**: `cargo check`
 - **Run tests**: `cargo test` (standard Rust testing)
 - **Run readEXR**: `cargo run --release` (uses `data/` folder by default)
-- **Run thumbnail generator**: Compile then use `run_example.bat` or `release.py`
+- **Run thumbnail generator**: Build first, then use `run_example.bat` or `release.py`
+
+## Binary Targets
+
+The project produces one main binary:
+- **readEXR** - The main EXR analyzer (defined in `Cargo.toml` with custom path)
+- **Thumbnail tool** - Separate binary in `_tools/main_thump.rs` (must be compiled separately)
 
 ## Key Files and Architecture
 
@@ -30,8 +36,10 @@ This is a Rust-based EXR (OpenEXR) file processing toolkit with two main applica
 - CLI tool using Clap for argument parsing
 - Parallel EXR to PNG thumbnail conversion
 - Linear color space tone mapping with Reinhard algorithm
-- Configurable gamma correction and scaling filters
-- Detailed timing statistics and batch processing
+- Configurable gamma correction (default: 2.2) and scaling filters (lanczos3, gaussian, cubic, triangle)
+- Detailed timing statistics with atomic counters for thread-safe metrics
+- Proportional width scaling based on height parameter
+- Command line options: `--source-folder`, `--dest-folder`, `--height`, `--info`, `--linear-tone-mapping`, `--gamma`, `--filter`
 
 ### Configuration System
 - `channel_groups.json` - Defines channel grouping rules with priorities
@@ -41,9 +49,10 @@ This is a Rust-based EXR (OpenEXR) file processing toolkit with two main applica
 ### Key Dependencies
 - `exr = "1.73"` - EXR file reading/parsing
 - `rayon = "1.8"` - Parallel processing
-- `image = "0.24"` - Image manipulation and PNG output
-- `clap = "4.4"` - CLI argument parsing
+- `image = "0.24"` - Image manipulation and PNG output (with PNG feature enabled)
+- `clap = "4.4"` - CLI argument parsing (with derive feature)
 - `serde/serde_json` - Config serialization
+- `once_cell = "1.19"` - Static initialization
 
 ## Development Patterns
 
@@ -66,6 +75,14 @@ This is a Rust-based EXR (OpenEXR) file processing toolkit with two main applica
 5. Collect and report statistics
 
 ## Data Folders
-- `data/` - Input EXR files
-- `tiff/` - Output TIFF files (legacy)
+- `data/` - Input EXR files (default source folder)
+- `tiff/` - Output TIFF files (legacy, used by `release.py`)
+- `thumb/` - PNG thumbnail output folder (used by `run_example.bat`)
 - `target/` - Rust build artifacts
+- Executable location: `.\target\release\readEXR.exe`
+
+## Helper Scripts
+- `build.bat` - Polish language build script with success/error reporting
+- `run_example.bat` - Example runner for thumbnail generation (Polish configuration)
+- `release.py` - Python script for TIFF conversion with deflate compression
+- `run.py` - Additional Python runner script

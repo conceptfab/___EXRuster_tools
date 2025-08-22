@@ -1,0 +1,248 @@
+EXR File Analysis: data\scene_MANAGE-IT_20_R1_MP.exr
+==========================================
+
+Image Attributes:
+  Display Window: IntegerBounds { position: Vec2(0, 0), size: Vec2(1800, 2200) }
+  Pixel Aspect Ratio: 1
+
+Custom Attributes:
+
+Layer 1 Information:
+  Layer Name: None
+  Size: 1800x2200
+  Encoding: Encoding { compression: ZIP16, blocks: ScanLines, line_order: Increasing }
+  Compression: ZIP16
+  Line Order: Increasing
+
+  Layer Attributes:
+
+  Channel Groups:
+    Base Channels:
+      B
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      G
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      R
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+
+    Cryptomatte Channels:
+      Cryptomatte0.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Cryptomatte0.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Cryptomatte0.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+
+    Light Channels:
+      LightMix.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      LightMix.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      LightMix.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Sky.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Sky.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Sky.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Sun.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Sun.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Sun.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+
+    Scene Channels:
+      Background.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Background.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Background.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Translucency0.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Translucency0.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      Translucency0.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      VirtualBeauty.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      VirtualBeauty.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      VirtualBeauty.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      ZDepth.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      ZDepth.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      ZDepth.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+
+    Scene Objects Channels:
+      ID0.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      ID0.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      ID0.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _add.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _add.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _add.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _floor.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _floor.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _floor.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _plants.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _plants.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _plants.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _product.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _product.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _product.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _walls.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _walls.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      _walls.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      leather.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      leather.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      leather.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      scratch.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      scratch.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      scratch.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+
+    Technical Channels:
+      RenderStamp0.blue
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      RenderStamp0.green
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+      RenderStamp0.red
+        Sample Data: Singular([f32; 3960000])
+        Sampling: Vec2(1, 1)
+        Quantize Linearly: false
+
+

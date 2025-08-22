@@ -1,12 +1,27 @@
 use std::fs;
 use std::path::Path;
-use std::io::Write;
+use std::io::{Write, BufWriter};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use exr::prelude::*;
 use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
+use once_cell::sync::Lazy;
+
+// String interning cache for group names to avoid repeated allocations
+static GROUP_NAME_CACHE: Lazy<HashMap<&'static str, String>> = Lazy::new(|| {
+    let mut cache = HashMap::new();
+    cache.insert("base", "Base".to_string());
+    cache.insert("scene", "Scene".to_string());
+    cache.insert("technical", "Technical".to_string());
+    cache.insert("light", "Light".to_string());
+    cache.insert("cryptomatte", "Cryptomatte".to_string());
+    cache.insert("scene_objects", "Scene Objects".to_string());
+    cache.insert("basic_rgb", "Basic RGB".to_string());
+    cache.insert("other", "Other".to_string());
+    cache
+});
 
 #[derive(Deserialize, Serialize)]
 struct ConfigSettings {
@@ -156,28 +171,39 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Share config between threads
     let config = Arc::new(config);
     
+    // Collect progress messages to reduce console locking
+    let progress_messages = Arc::new(Mutex::new(Vec::new()));
+    
     // Process files in parallel
     let results: Vec<_> = exr_files
         .par_iter()
         .map(|path| {
             let file_start = Instant::now();
-            println!("Processing: {}", path.display());
+            let progress_msgs = progress_messages.clone();
             
             let result = process_exr_file(path, &config);
             let duration = file_start.elapsed();
             
             match result {
                 Ok(()) => {
-                    println!("✓ Processed {} in {:.2}s", path.display(), duration.as_secs_f64());
+                    let msg = format!("✓ Processed {} in {:.2}s", path.display(), duration.as_secs_f64());
+                    progress_msgs.lock().unwrap().push(msg);
                     Ok(path.file_name().unwrap_or_default().to_string_lossy().to_string())
                 }
                 Err(e) => {
-                    eprintln!("✗ Error processing {}: {}", path.display(), e);
+                    let msg = format!("✗ Error processing {}: {}", path.display(), e);
+                    progress_msgs.lock().unwrap().push(msg);
                     Err(format!("Error in {}: {}", path.display(), e))
                 }
             }
         })
         .collect();
+    
+    // Print all progress messages at once
+    let messages = progress_messages.lock().unwrap();
+    for msg in messages.iter() {
+        println!("{}", msg);
+    }
     
     let total_duration = start_time.elapsed();
     let successful = results.iter().filter(|r| r.is_ok()).count();
@@ -200,7 +226,7 @@ fn process_exr_file(exr_path: &Path, config: &Arc<ChannelGroupConfig>) -> std::r
         .ok_or("Invalid file name")?;
     
     let output_path = format!("{}.txt", file_stem);
-    let mut output_file = fs::File::create(&output_path)?;
+    let mut output_file = BufWriter::new(fs::File::create(&output_path)?);
     
     writeln!(output_file, "EXR File Analysis: {}", exr_path.display())?;
     writeln!(output_file, "==========================================")?;
@@ -270,18 +296,21 @@ fn process_exr_file(exr_path: &Path, config: &Arc<ChannelGroupConfig>) -> std::r
         writeln!(output_file)?;
     }
     
+    output_file.flush()?;
     Ok(())
 }
 
 fn determine_channel_group(channel_name: &str, config: &Arc<ChannelGroupConfig>) -> String {
-    // Check for basic RGB channels first (avoid string allocation)
+    // Check for basic RGB channels first (use cached string)
     if ["R", "G", "B", "A"].contains(&channel_name) {
         for group_def in config.groups.values() {
             if group_def.basic_rgb {
-                return group_def.name.clone();
+                return GROUP_NAME_CACHE.get("base").cloned()
+                    .unwrap_or_else(|| group_def.name.clone());
             }
         }
-        return config.config.fallback_names.basic_rgb.clone();
+        return GROUP_NAME_CACHE.get("basic_rgb").cloned()
+            .unwrap_or_else(|| config.config.fallback_names.basic_rgb.clone());
     }
     
     let prefix = if let Some(dot_pos) = channel_name.find('.') {
@@ -293,27 +322,31 @@ fn determine_channel_group(channel_name: &str, config: &Arc<ChannelGroupConfig>)
     // Check specific groups in priority order
     for group_key in &config.config.group_priority_order {
         if let Some(group_def) = config.groups.get(group_key) {
-            // Check exact prefix matches (avoid string allocation)
+            // Check exact prefix matches (use cached strings when possible)
             for prefix_str in &group_def.prefixes {
                 if prefix == prefix_str {
-                    return group_def.name.clone();
+                    return GROUP_NAME_CACHE.get(group_key.as_str()).cloned()
+                        .unwrap_or_else(|| group_def.name.clone());
                 }
             }
             
             // Check pattern matches
             for pattern in &group_def.patterns {
                 if matches_pattern(prefix, pattern) {
-                    return group_def.name.clone();
+                    return GROUP_NAME_CACHE.get(group_key.as_str()).cloned()
+                        .unwrap_or_else(|| group_def.name.clone());
                 }
             }
         }
     }
     
     // Default to Scene Objects for unknown channels
-    if let Some(scene_objects_group) = config.groups.get("scene_objects") {
-        scene_objects_group.name.clone()
+    if let Some(_scene_objects_group) = config.groups.get("scene_objects") {
+        GROUP_NAME_CACHE.get("scene_objects").cloned()
+            .unwrap_or_else(|| config.config.fallback_names.default.clone())
     } else {
-        config.config.fallback_names.default.clone()
+        GROUP_NAME_CACHE.get("other").cloned()
+            .unwrap_or_else(|| config.config.fallback_names.default.clone())
     }
 }
 
@@ -322,13 +355,11 @@ fn matches_pattern(text: &str, pattern: &str) -> bool {
         return true;
     }
     
-    if pattern.ends_with('*') {
-        let prefix_pattern = &pattern[..pattern.len()-1];
+    if let Some(prefix_pattern) = pattern.strip_suffix('*') {
         return text.starts_with(prefix_pattern);
     }
     
-    if pattern.starts_with('*') {
-        let suffix_pattern = &pattern[1..];
+    if let Some(suffix_pattern) = pattern.strip_prefix('*') {
         return text.ends_with(suffix_pattern);
     }
     
