@@ -1,0 +1,242 @@
+EXR File Analysis: data\scene_MANAGE-IT_19_R1_MP.exr
+==========================================
+
+Image Attributes:
+  Display Window: (0, 0, 1799, 2199)
+  Pixel Aspect Ratio: 1
+  Compression: ZIP
+  Line Order: Increasing
+
+Layer 1 Information:
+  Compression: ZIP
+  Line Order: Increasing
+
+  Channel Groups:
+    Base Channels:
+      B
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      R
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      G
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+
+    Cryptomatte Channels:
+      Cryptomatte0.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Cryptomatte0.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Cryptomatte0.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+
+    Light Channels:
+      Sky.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      LightMix.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      LightMix.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Sun.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Sun.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Sun.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Sky.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Sky.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      LightMix.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+
+    Scene Channels:
+      VirtualBeauty.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Background.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Translucency0.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Translucency0.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Translucency0.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      ZDepth.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      ZDepth.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      ZDepth.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      VirtualBeauty.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      VirtualBeauty.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Background.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      Background.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+
+    Scene Objects Channels:
+      _add.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _floor.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _floor.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _plants.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _floor.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _walls.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _plants.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _plants.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _product.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      leather.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      scratch.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      scratch.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      scratch.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      leather.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      ID0.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _product.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _add.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _product.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _walls.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _walls.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      leather.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      ID0.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      ID0.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      _add.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+
+    Technical Channels:
+      RenderStamp0.green
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      RenderStamp0.red
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+      RenderStamp0.blue
+        Sample Type: Float
+        Sampling: (1, 1)
+        Quantize Linearly: false
+
