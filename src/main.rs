@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use std::io::{Write, BufWriter};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -8,6 +7,10 @@ use exr::prelude::*;
 use serde::{Deserialize, Serialize};
 use rayon::prelude::*;
 use once_cell::sync::Lazy;
+// Level 2 optimizations imports
+use tokio::io::AsyncWriteExt;
+use tokio::fs as async_fs;
+use memmap2::MmapOptions;
 
 // String interning cache for group names to avoid repeated allocations
 static GROUP_NAME_CACHE: Lazy<HashMap<&'static str, String>> = Lazy::new(|| {
@@ -219,58 +222,70 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 }
 
 fn process_exr_file(exr_path: &Path, config: &Arc<ChannelGroupConfig>) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let image = read_all_data_from_file(exr_path)?;
+    // Level 2 Optimization: Memory-mapped file reading for large files (better I/O performance)
+    let file = fs::File::open(exr_path)?;
+    let metadata = match file.metadata()?.len() {
+        // For files > 10MB, use memory mapping for better performance
+        file_size if file_size > 10 * 1024 * 1024 => {
+            let mmap = unsafe { MmapOptions::new().map(&file)? };
+            MetaData::read_from_buffered(std::io::Cursor::new(&mmap[..]), false)?
+        },
+        // For smaller files, use direct file reading
+        _ => MetaData::read_from_file(exr_path, false)?
+    };
     
     let file_stem = exr_path.file_stem()
         .and_then(|s| s.to_str())
         .ok_or("Invalid file name")?;
     
-    let output_path = format!("{}.txt", file_stem);
-    let mut output_file = BufWriter::new(fs::File::create(&output_path)?);
+    // Level 2 Optimization: Build content in memory first, then write asynchronously
+    let mut content = String::new();
     
-    writeln!(output_file, "EXR File Analysis: {}", exr_path.display())?;
-    writeln!(output_file, "==========================================")?;
-    writeln!(output_file)?;
+    content.push_str(&format!("EXR File Analysis: {}\n", exr_path.display()));
+    content.push_str("==========================================\n\n");
     
-    writeln!(output_file, "Image Attributes:")?;
-    writeln!(output_file, "  Display Window: {:?}", image.attributes.display_window)?;
-    writeln!(output_file, "  Pixel Aspect Ratio: {}", image.attributes.pixel_aspect)?;
-    if let Some(chromaticities) = &image.attributes.chromaticities {
-        writeln!(output_file, "  Chromaticities: {:?}", chromaticities)?;
-    }
-    if let Some(time_code) = &image.attributes.time_code {
-        writeln!(output_file, "  Time Code: {:?}", time_code)?;
-    }
-    writeln!(output_file)?;
-    
-    writeln!(output_file, "Custom Attributes:")?;
-    for (name, value) in &image.attributes.other {
-        writeln!(output_file, "  {}: {:?}", name, value)?;
-    }
-    writeln!(output_file)?;
-    
-    for (layer_index, layer) in image.layer_data.iter().enumerate() {
-        writeln!(output_file, "Layer {} Information:", layer_index + 1)?;
-        writeln!(output_file, "  Layer Name: {:?}", layer.attributes.layer_name)?;
-        writeln!(output_file, "  Size: {}x{}", layer.size.width(), layer.size.height())?;
-        writeln!(output_file, "  Encoding: {:?}", layer.encoding)?;
-        writeln!(output_file, "  Compression: {:?}", layer.encoding.compression)?;
-        writeln!(output_file, "  Line Order: {:?}", layer.encoding.line_order)?;
-        writeln!(output_file)?;
-        
-        writeln!(output_file, "  Layer Attributes:")?;
-        for (attr_name, attr_value) in &layer.attributes.other {
-            writeln!(output_file, "    {}: {:?}", attr_name, attr_value)?;
+    // Get shared attributes from first header (they're the same for all layers)
+    if let Some(first_header) = metadata.headers.iter().next() {
+        content.push_str("Image Attributes:\n");
+        content.push_str(&format!("  Display Window: {:?}\n", first_header.shared_attributes.display_window));
+        content.push_str(&format!("  Pixel Aspect Ratio: {}\n", first_header.shared_attributes.pixel_aspect));
+        if let Some(chromaticities) = &first_header.shared_attributes.chromaticities {
+            content.push_str(&format!("  Chromaticities: {:?}\n", chromaticities));
         }
-        writeln!(output_file)?;
+        if let Some(time_code) = &first_header.shared_attributes.time_code {
+            content.push_str(&format!("  Time Code: {:?}\n", time_code));
+        }
+        content.push('\n');
         
-        writeln!(output_file, "  Channel Groups:")?;
+        content.push_str("Custom Attributes:\n");
+        for (name, value) in &first_header.shared_attributes.other {
+            content.push_str(&format!("  {}: {:?}\n", name, value));
+        }
+        content.push('\n');
+    }
+    
+    for (layer_index, header) in metadata.headers.iter().enumerate() {
+        content.push_str(&format!("Layer {} Information:\n", layer_index + 1));
+        content.push_str(&format!("  Layer Name: {:?}\n", header.own_attributes.layer_name));
+        content.push_str(&format!("  Size: {}x{}\n", header.layer_size.width(), header.layer_size.height()));
+        content.push_str(&format!("  Compression: {:?}\n", header.compression));
+        content.push_str(&format!("  Line Order: {:?}\n", header.line_order));
+        content.push_str(&format!("  Deep Data: {}\n", header.deep));
+        content.push('\n');
+        
+        content.push_str("  Layer Attributes:\n");
+        for (attr_name, attr_value) in &header.own_attributes.other {
+            content.push_str(&format!("    {}: {:?}\n", attr_name, attr_value));
+        }
+        content.push('\n');
+        
+        content.push_str("  Channel Groups:\n");
         
         // Pre-allocate with estimated capacity
         let mut channel_groups: BTreeMap<String, Vec<&_>> = BTreeMap::new();
         
-        // Process channels in parallel and group them
-        let grouped_channels: Vec<_> = layer.channel_data.list
+        // Process channels in parallel and group them (now using header.channels.list)
+        let grouped_channels: Vec<_> = header.channels.list
             .par_iter()
             .map(|channel| {
                 let group_name = determine_channel_group(&channel.name.to_string(), config);
@@ -284,19 +299,29 @@ fn process_exr_file(exr_path: &Path, config: &Arc<ChannelGroupConfig>) -> std::r
         }
         
         for (group_name, channels) in channel_groups {
-            writeln!(output_file, "    {} Channels:", group_name)?;
+            content.push_str(&format!("    {} Channels:\n", group_name));
             for channel in channels {
-                writeln!(output_file, "      {}", channel.name)?;
-                writeln!(output_file, "        Sample Data: {:?}", channel.sample_data)?;
-                writeln!(output_file, "        Sampling: {:?}", channel.sampling)?;
-                writeln!(output_file, "        Quantize Linearly: {}", channel.quantize_linearly)?;
+                content.push_str(&format!("      {}\n", channel.name));
+                content.push_str(&format!("        Sample Type: {:?}\n", channel.sample_type));
+                content.push_str(&format!("        Sampling: {:?}\n", channel.sampling));
+                content.push_str(&format!("        Quantize Linearly: {}\n", channel.quantize_linearly));
             }
-            writeln!(output_file)?;
+            content.push('\n');
         }
-        writeln!(output_file)?;
+        content.push('\n');
     }
     
-    output_file.flush()?;
+    // Level 2 Optimization: Async file writing
+    let output_path = format!("{}.txt", file_stem);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    
+    rt.block_on(async {
+        let mut file = async_fs::File::create(&output_path).await?;
+        file.write_all(content.as_bytes()).await?;
+        file.flush().await
+    })?;
     Ok(())
 }
 
